@@ -82,7 +82,7 @@ import {
 import type { EntryRow } from '@/data/types'
 
 const meta = moduleMeta('bridge')
-const columns = ["作业编号", "廊桥编号", "对应机位", "靠桥时间", "撤桥时间", "操作人员", "对接检查项", "作业状态"]
+const columns = ["作业编号", "廊桥编号", "对应机位", "靠桥时间", "撤桥时间", "操作人员", "对接检查项", "作业状态", "中止说明"]
 const actions = ["开始靠接", "确认撤离", "登记中止"]
 const statuses = ["待靠接", "已靠桥", "已撤离", "异常中止"]
 const stats = [{"label": "今日靠接作业", "value": 0}, {"label": "待靠桥作业", "value": 0}, {"label": "异常中止作业", "value": 0}]

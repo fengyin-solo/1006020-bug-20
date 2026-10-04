@@ -1,5 +1,6 @@
 import { MODULE_BY_KEY } from '@/data/modules'
 import { allRows, listRows, resetRows, saveRows } from '@/data/local-store'
+import { releaseStand } from '@/domain/stand'
 import type { ActionResult, EntryRow, ModuleMeta, OverviewResult, PageResult } from '@/data/types'
 
 // 会写进数据的「往回走」动作：命中就把这条记录标成异常态，看板上能一眼看出来。
@@ -28,13 +29,13 @@ export function listEntries(key: string, filters: Record<string, string> = {}): 
   return { items: matched, total: matched.length, page: 1, size: matched.length }
 }
 
-export function runAction(key: string, id: number, action: string): ActionResult {
-  const meta = moduleMeta(key)
+// 通用状态流转：不涉及跨模块联动的普通动作都走这里。
+function applyStatusTransition(meta: ModuleMeta, id: number, action: string): ActionResult {
   const target = meta.actionTargets[action]
   if (!target) {
     return { ok: false, message: `${meta.entity}没有登记「${action}」这个动作` }
   }
-  const rows = listRows(key)
+  const rows = listRows(meta.key)
   const index = rows.findIndex((row) => Number(row.id) === id)
   if (index < 0) {
     return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
@@ -52,8 +53,70 @@ export function runAction(key: string, id: number, action: string): ActionResult
   }
   const next = [...rows]
   next[index] = updated
-  saveRows(key, next)
+  saveRows(meta.key, next)
   return { ok: true, message: `${meta.entity}已${action}，当前状态「${target}」` }
+}
+
+// 机位列表入口的「释放机位」：跨模块的判断全部委托给统一的机位释放逻辑。
+export function releaseStandFromList(id: number): ActionResult {
+  const meta = moduleMeta('stand')
+  const row = listRows(meta.key).find((item) => Number(item.id) === id)
+  if (!row) {
+    return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
+  }
+  return releaseStand(String(row['机位编号'] ?? ''), { source: 'stand-list' })
+}
+
+// 航班保障入口的「确认完成」：先完成本模块状态流转，再顺带释放机位，
+// 释放这一步和机位列表走的是同一个函数，行为不会再有差异。
+export function completeFlightAndReleaseStand(id: number): ActionResult {
+  const meta = moduleMeta('flight')
+  const rows = listRows(meta.key)
+  const index = rows.findIndex((row) => Number(row.id) === id)
+  if (index < 0) {
+    return { ok: false, message: `没有找到编号为 ${id} 的${meta.entity}` }
+  }
+  const flight = rows[index]
+  const flightLabel = `航班 ${String(flight['航班号'] ?? id)}`
+
+  const transition = applyStatusTransition(meta, id, '确认完成')
+  if (!transition.ok) {
+    // 已经是终态时不允许改写数据，但仍要补走一遍释放判断：
+    // 这正是历史上从航班侧漏清占用时段的那条路径。
+    const release = releaseStand(String(flight['机位号'] ?? ''), {
+      source: 'flight',
+      expectedFlight: String(flight['航班号'] ?? ''),
+      flightLabel,
+    })
+    if (release.ok) {
+      return { ok: true, message: `${transition.message}；${release.message}` }
+    }
+    // 真正的挡回（维护中/已封闭/占用航班对不上）才作为失败透出。
+    return release
+  }
+
+  const release = releaseStand(String(flight['机位号'] ?? ''), {
+    source: 'flight',
+    expectedFlight: String(flight['航班号'] ?? ''),
+    flightLabel,
+  })
+  // 航班完成照常生效；但机位释放被挡回（维护中/已封闭/占用航班对不上）时，
+  // 用 ok:false 把原因透传给值班人员，由机位侧处理，不能假装什么都没发生。
+  return {
+    ok: release.ok,
+    message: `${transition.message}；${release.message}`,
+  }
+}
+
+export function runAction(key: string, id: number, action: string): ActionResult {
+  if (key === 'stand' && action === '释放机位') {
+    return releaseStandFromList(id)
+  }
+  if (key === 'flight' && action === '确认完成') {
+    return completeFlightAndReleaseStand(id)
+  }
+  const meta = moduleMeta(key)
+  return applyStatusTransition(meta, id, action)
 }
 
 export function resetModule(key: string): PageResult {
@@ -68,7 +131,7 @@ export function exportEntries(key: string): { filename: string; content: string 
   for (const row of listRows(key)) {
     lines.push([row.id, ...meta.fields.map((field) => row[field] ?? ''), row.status].join(','))
   }
-  return { filename: `${meta.name}-清单.csv`, content: `\uFEFF${lines.join('\n')}` }
+  return { filename: `${meta.name}-清单.csv`, content: `﻿${lines.join('\n')}` }
 }
 
 export function downloadEntries(key: string): void {

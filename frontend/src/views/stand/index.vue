@@ -85,7 +85,6 @@ const meta = moduleMeta('stand')
 const columns = ["机位编号", "机位类型", "适用机型", "廊桥配置", "近远机位", "占用时段", "当前航班", "机位状态"]
 const actions = ["分配机位", "释放机位", "封闭机位"]
 const statuses = ["空闲", "占用中", "维护中", "已封闭"]
-const stats = [{"label": "可用机位", "value": 0}, {"label": "占用中机位", "value": 0}, {"label": "封闭机位", "value": 0}]
 
 const rows = ref<EntryRow[]>([])
 const total = ref(0)
@@ -98,6 +97,12 @@ const statusSummary = computed(() =>
     count: rows.value.filter((row) => String(row.status) === status).length,
   })),
 )
+// 统计卡片和列表读的是同一份机位数据，避免可用判断和占用时段各说各话。
+const stats = computed(() => [
+  { label: "可用机位", value: rows.value.filter((row) => String(row.status) === "空闲").length },
+  { label: "占用中机位", value: rows.value.filter((row) => String(row.status) === "占用中").length },
+  { label: "封闭机位", value: rows.value.filter((row) => ["维护中", "已封闭"].includes(String(row.status))).length },
+])
 
 function resetFilters() {
   filters.value = {}
